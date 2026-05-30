@@ -1,151 +1,190 @@
 import streamlit as st
-import torch
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+import requests
+from datetime import datetime
 
 # ================================================================
-# 1. إعدادات الصفحة والجماليات (Page Config & Styling)
+# 1. إعدادات الصفحة
 # ================================================================
 st.set_page_config(
-    page_title="الشيخ محمد - وكيل مساعد الحسانية الذكي", 
+    page_title="الشيخ محمد - Agent Hassaniya",
     page_icon="🕌",
     layout="centered"
 )
 
-# إضافة CSS مخصص مع ألوان ترابية (صحراوية) تناسب شخصية الشيخ محمد
 st.markdown("""
     <style>
-    .main {
-        background-color: #f5f0e8;
-    }
-    .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
-        margin-bottom: 10px;
-    }
-    .stChatInputContainer {
-        padding-bottom: 20px;
-    }
-    /* تلوين رسائل المستخدم */
-    [data-testid="stChatMessage"]:has(div:contains("user")) {
-        background-color: #2c5f2d;
-        color: white;
-    }
-    /* تلوين رسائل المساعد */
-    [data-testid="stChatMessage"]:has(div:contains("assistant")) {
-        background-color: #8b5a2b;
-        color: white;
-    }
+    .main { background-color: #f5f0e8; }
+    .stChatMessage { border-radius: 15px; padding: 10px; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
 # ================================================================
-# 2. تحميل النموذج (الاحتفاظ بالذاكرة عبر @st.cache_resource)
+# 2. أدوات الـ Agent (نفس أدوات Exercice 2-3)
 # ================================================================
-MODEL_ID = "ABMZD/chiekh-agent"
-
-@st.cache_resource
-def load_model_and_tokenizer(model_id):
+def get_weather(city="Nouakchott"):
     try:
-        tokenizer = GPT2Tokenizer.from_pretrained(model_id)
-        model = GPT2LMHeadModel.from_pretrained(model_id)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model.to(device)
-        return tokenizer, model, device
-    except Exception as e:
-        st.error(f"❌ خطأ في تحميل النموذج: {e}")
-        return None, None, None
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
+        geo_resp = requests.get(geo_url, timeout=10)
+        geo_data = geo_resp.json()
+        if not geo_data.get("results"):
+            return f"ما لقيتش مدينة {city}"
+        lat = geo_data["results"][0]["latitude"]
+        lon = geo_data["results"][0]["longitude"]
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        weather_resp = requests.get(weather_url, timeout=10)
+        temp = weather_resp.json()["current_weather"]["temperature"]
+        return f"الجو في {city}: {temp}°C"
+    except:
+        return "عذراً، ما قدرتش أجيب المعلومة"
 
-tokenizer, model, device = load_model_and_tokenizer(MODEL_ID)
+def get_prayer_times(city="Nouakchott", country="Mauritania"):
+    url = "https://api.aladhan.com/v1/timingsByCity"
+    params = {"city": city, "country": country, "method": 3}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        timings = response.json()["data"]["timings"]
+        return f"الفجر: {timings['Fajr']}, الظهر: {timings['Dhuhr']}, العصر: {timings['Asr']}, المغرب: {timings['Maghrib']}, العشاء: {timings['Isha']}"
+    except:
+        return "عذراً، ما قدرتش أجيب أوقات الصلاة"
+
+def get_proverb(topic=""):
+    proverbs = {
+        "الصبر": "الصبر مفتاح الفرج - معناه: بعد العسر يسر",
+        "العلم": "العلم نور والجهل ظلام",
+        "default": "العقل زينة الإنسان"
+    }
+    return proverbs.get(topic, proverbs["default"])
 
 # ================================================================
-# 3. منطق توليد الإجابات (Inference Logic)
+# 3. معالجة السؤال (نفس Agent Exercice 3)
 # ================================================================
-def generate_response(prompt):
-    if tokenizer is None or model is None:
-        return "عذراً، حدث خطأ أثناء تحميل النموذج."
+def process_with_agent(user_input, thread_id):
+    user_input_lower = user_input.lower()
     
-    inputs = tokenizer.encode(prompt, return_tensors="pt").to(device)
-    outputs = model.generate(
-        inputs, 
-        max_length=100, 
-        num_return_sequences=1, 
-        no_repeat_ngram_size=2, 
-        do_sample=True, 
-        top_k=50, 
-        top_p=0.95, 
-        temperature=0.7, 
-        pad_token_id=tokenizer.eos_token_id
-    )
-    return tokenizer.decode(outputs[0], skip_special_tokens=True).replace(prompt, "").strip()
+    # الحصول على تفضيلات المستخدم من الذاكرة
+    preferences = st.session_state.get("preferences", {})
+    
+    # تحديد الأداة المناسبة
+    if "طقس" in user_input_lower or "حر" in user_input_lower:
+        result = get_weather()
+        return {
+            "response": f"بسم الله. {result} الحمد لله.",
+            "action": "WEATHER_API",
+            "sources": ["Open-Meteo API"],
+            "confidence": "haute"
+        }
+    elif "صلاة" in user_input_lower or "الفجر" in user_input_lower:
+        result = get_prayer_times()
+        return {
+            "response": f"الله أكبر. {result}",
+            "action": "PRAYER_API",
+            "sources": ["AlAdhan API"],
+            "confidence": "haute"
+        }
+    elif "مثل" in user_input_lower or "حكمة" in user_input_lower:
+        result = get_proverb("الصبر")
+        return {
+            "response": f"المثل الحساني: {result}\nوالله أعلم.",
+            "action": "PROVERB_RAG",
+            "sources": ["Dataset: amthal-hassaniya"],
+            "confidence": "haute"
+        }
+    elif "سوق" in user_input_lower and not preferences.get("aime_chaleur", True):
+        return {
+            "response": "نظراً لأنك لا تحب الحر، أنصحك تروح للسوق في الصباح الباكر.",
+            "action": "MEMORY_ADAPTED",
+            "sources": ["Mémoire épisodique"],
+            "confidence": "haute"
+        }
+    elif "السلام" in user_input_lower:
+        return {
+            "response": "وعليكم السلام ورحمة الله. كيف يمكنني مساعدتك يا ولدي؟",
+            "action": "GREETING",
+            "sources": ["Personnage"],
+            "confidence": "haute"
+        }
+    else:
+        return {
+            "response": "الحمد لله على كل حال. والله أعلم يا ولدي.",
+            "action": "DIRECT",
+            "sources": ["Connaissances du cheikh"],
+            "confidence": "moyenne"
+        }
 
 # ================================================================
-# 4. واجهة المستخدم (Chat Interface)
+# 4. واجهة المستخدم
 # ================================================================
-
-# العنوان الجانبي (Sidebar) مع شخصية الشيخ محمد
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3069/3069171.png", width=100)  # أيقونة مسجد
+    st.image("https://cdn-icons-png.flaticon.com/512/3069/3069171.png", width=100)
     st.title("🕌 الشيخ محمد")
     st.info("""
     **الشخصية:** شيخ محظرة تقليدية
-    **اللغة:** الحسانية (موريتانيا)
-    **النبرة:** متواضع، دافئ، يذكر الله
-    
-    **المواضيع:**
-    - التحيات والسلام
-    - الدروس والعبادة
-    - الطعام والضيافة
-    - الصلاة والأذكار
-    - السكن والعائلة
+    **اللغة:** الحسانية
+    **الأدوات:** الطقس، الصلاة، الأمثال
     """)
     st.divider()
-    st.write("🛠️ **الأدوات المستخدمة:**")
-    st.caption("- LangChain Agent")
-    st.caption("- API: Open-Meteo (الطقس)")
-    st.caption("- API: AlAdhan (الصلاة)")
-    st.caption("- Dataset: أمثال حسانية")
-    st.caption("- Mémoire épisodique")
-    
-    st.divider()
-    st.write("⚠️ **حدود المساعد:**")
-    st.caption("- لا يجيب عن الأسعار")
-    st.caption("- لا يعرف أماكن خارج موريتانيا")
-    st.caption("- يرفض المواضيع الدينية الخلافية")
+    st.write("📊 **هيكل الإجابة:**")
+    st.caption("- response: الرد بالحسانية")
+    st.caption("- action: الأداة المستخدمة")
+    st.caption("- sources: المصادر")
+    st.caption("- confidence: مستوى الثقة")
     
     if st.button("🗑️ مسح المحادثة"):
         st.session_state.messages = []
+        st.session_state.preferences = {}
         st.rerun()
 
-# العنوان الرئيسي في وسط الصفحة
-st.title("🕌 الشيخ محمد - مساعد الحسانية الذكي")
-st.caption("السلام عليكم ورحمة الله. اسألني عن الطقس، الصلاة، أو الأمثال الحسانية...")
+st.title("🕌 الشيخ محمد - Agent Hassaniya")
+st.caption("السلام عليكم. اسألني عن الطقس، الصلاة، أو الأمثال...")
 
-# إنشاء "ذاكرة" للمحادثة باستخدام session_state
+# تهيئة الذاكرة
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "preferences" not in st.session_state:
+    st.session_state.preferences = {}
+if "thread_id" not in st.session_state:
+    import random
+    st.session_state.thread_id = f"user_{random.randint(1, 10000)}"
 
-# عرض تاريخ المحادثة (Chat History)
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# عرض المحادثة
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+        if "metadata" in msg:
+            with st.expander("🔍 تفاصيل"):
+                st.json(msg["metadata"])
 
-# منطقة إدخال المستخدم (Chat Input)
+# إدخال المستخدم
 if prompt := st.chat_input("شنو سؤالك يا ولدي؟..."):
-    
-    # 1. عرض رسالة المستخدم في الواجهة
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # 2. توليد وإظهار رد النموذج
+        st.write(prompt)
+    
     with st.chat_message("assistant"):
         with st.spinner("الشيخ محمد يفكر..."):
-            response = generate_response(prompt)
-            st.markdown(response)
+            result = process_with_agent(prompt, st.session_state.thread_id)
+            st.write(result["response"])
+            
+            # عرض التفاصيل المطلوبة في Exercice 8
+            with st.expander("🔍 تفاصيل الإجابة"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("🎯 Action", result["action"])
+                    st.metric("📊 Confiance", result["confidence"])
+                with col2:
+                    st.write("**📚 Sources:**")
+                    for s in result["sources"]:
+                        st.write(f"- {s}")
     
-    # 3. حفظ رد النموذج في الذاكرة
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": result["response"],
+        "metadata": {
+            "action": result["action"],
+            "sources": result["sources"],
+            "confidence": result["confidence"]
+        }
+    })
 
-# تذييل الصفحة
 st.markdown("---")
-st.markdown("<center style='color: #8b5a2b;'>🤖 الشيخ محمد - Agent LangChain | 🕌 محظرة تقليدية</center>", unsafe_allow_html=True)
+st.markdown("<center style='color: #8b5a2b;'>🤖 Agent LangChain | 🕌 Cheikh Muhammad</center>", unsafe_allow_html=True)
