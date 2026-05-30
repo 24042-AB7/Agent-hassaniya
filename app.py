@@ -104,7 +104,7 @@ def process_query(user_input):
 # ================================================================
 st.set_page_config(page_title="الشيخ محمد - Agent Hassaniya", page_icon="🕌")
 
-st.title("🕌 الشيخ محمد - مساعد الحسانية الذكي")
+st.title("🕌 الشيخ محمد - وكيل مساعد الحسانية الذكي")
 st.caption("السلام عليكم. اسألني عن الطقس، الصلاة، أو أي شيء بالحسانية")
 
 if "messages" not in st.session_state:
@@ -114,13 +114,13 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-if prompt := st.chat_input("شنو سؤالك؟..."):
+if prompt := st.chat_input("شنه سؤالك؟..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
     
     with st.chat_message("assistant"):
-        with st.spinner("الشيخ محمد يفكر..."):
+        with st.spinner("حنيني انشوفلك..."):
             result = process_query(prompt)
             st.write(result["response"])
             with st.expander("🔍 تفاصيل"):
